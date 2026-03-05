@@ -1,16 +1,16 @@
 {
-  "name": "pi-claude-subagents",
+  "name": "pi-better-subagents",
   "version": "0.2.0",
-  "description": "A pi extension providing Claude Code-style autonomous sub-agents",
+  "description": "A pi extension providing autonomous sub-agents with Claude Code-style UI",
   "author": "tintinweb",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/tintinweb/pi-claude-subagents.git"
+    "url": "https://github.com/tintinweb/pi-better-subagents.git"
   },
-  "homepage": "https://github.com/tintinweb/pi-claude-subagents#readme",
+  "homepage": "https://github.com/tintinweb/pi-better-subagents#readme",
   "bugs": {
-    "url": "https://github.com/tintinweb/pi-claude-subagents/issues"
+    "url": "https://github.com/tintinweb/pi-better-subagents/issues"
   },
   "keywords": [
     "pi-package",
@@ -40,7 +40,7 @@
     "extensions": [
       "./src/index.ts"
     ],
-    "video": "https://github.com/tintinweb/pi-claude-subagents/raw/master/media/demo.mp4",
-    "image": "https://github.com/tintinweb/pi-claude-subagents/raw/master/media/screenshot.png"
+    "video": "https://github.com/tintinweb/pi-better-subagents/raw/master/media/demo.mp4",
+    "image": "https://github.com/tintinweb/pi-better-subagents/raw/master/media/screenshot.png"
   }
 }

@@ -1,4 +1,4 @@
-# pi-claude-subagents
+# pi-agents
 
 A [pi](https://pi.dev) extension that provides Claude Code-style autonomous sub-agents. Spawn specialized agents to handle complex tasks in parallel — each runs in its own isolated session with dedicated tools, system prompts, and model selection.
 
@@ -67,13 +67,13 @@ Completed results can be expanded (ctrl+o in pi) to show the full agent output i
 ## Install
 
 ```bash
-pi install npm:pi-claude-subagents
+pi install npm:pi-agents
 ```
 
 Or load directly for development:
 
 ```bash
-pi -e ~/projects/pi-claude-subagents/src/index.ts
+pi -e ~/projects/pi-agents/src/index.ts
 ```
 
 ## Built-in Agent Types
@@ -199,7 +199,7 @@ Send a steering message to a running agent. Interrupts after current tool execut
 
 ## Graceful Max Turns
 
-Instead of hard-aborting when an agent reaches its turn limit, pi-claude-subagents uses a graceful shutdown:
+Instead of hard-aborting when an agent reaches its turn limit, pi-agents uses a graceful shutdown:
 
 1. At `max_turns`, the agent receives a steering message: *"You have reached your turn limit. Wrap up immediately — provide your final answer now."*
 2. The agent gets up to 5 additional grace turns to finish

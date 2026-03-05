@@ -20,7 +20,7 @@ import { detectEnv } from "./env.js";
 import type { SubagentType, ThinkingLevel } from "./types.js";
 
 /** Names of tools registered by this extension that subagents must NOT inherit. */
-const EXCLUDED_TOOL_NAMES = ["spawn_agent", "get_agent_result", "steer_agent"];
+const EXCLUDED_TOOL_NAMES = ["Agent", "get_subagent_result", "steer_subagent"];
 
 /** Default max turns to prevent subagents from looping indefinitely. */
 const DEFAULT_MAX_TURNS = 50;
@@ -83,6 +83,8 @@ export interface RunOptions {
   systemPromptAppend?: string;
   /** Called on tool start/end with activity info. */
   onToolActivity?: (activity: ToolActivity) => void;
+  /** Called on streaming text deltas from the assistant response. */
+  onTextDelta?: (delta: string, fullText: string) => void;
   onSessionCreated?: (session: AgentSession) => void;
 }
 
@@ -207,6 +209,7 @@ export async function runAgent(
   let softLimitReached = false;
   let aborted = false;
 
+  let currentMessageText = "";
   const unsubTurns = session.subscribe((event: AgentSessionEvent) => {
     if (event.type === "turn_end") {
       turnCount++;
@@ -217,6 +220,13 @@ export async function runAgent(
         aborted = true;
         session.abort();
       }
+    }
+    if (event.type === "message_start") {
+      currentMessageText = "";
+    }
+    if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
+      currentMessageText += event.assistantMessageEvent.delta;
+      options.onTextDelta?.(event.assistantMessageEvent.delta, currentMessageText);
     }
     if (event.type === "tool_execution_start") {
       options.onToolActivity?.({ type: "start", toolName: event.toolName });

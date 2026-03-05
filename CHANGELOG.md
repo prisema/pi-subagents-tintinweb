@@ -25,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - 2026-03-05
 
-Initial release of `pi-claude-subagents`.
+Initial release of `pi-agents`.
 
 ### Added
 - **Autonomous sub-agents** — spawn specialized agents via `spawn_agent` tool, each running in an isolated pi session
@@ -45,5 +45,5 @@ Initial release of `pi-claude-subagents`.
 - **`/agent` command** — interactive agent spawning
 - **`/agents` command** — list all agents with status tree
 
-[0.2.0]: https://github.com/tintinweb/pi-claude-subagents/releases/tag/v0.2.0
-[0.1.0]: https://github.com/tintinweb/pi-claude-subagents/releases/tag/v0.1.0
+[0.2.0]: https://github.com/tintinweb/pi-agents/releases/tag/v0.2.0
+[0.1.0]: https://github.com/tintinweb/pi-agents/releases/tag/v0.1.0

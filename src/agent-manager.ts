@@ -42,6 +42,8 @@ export class AgentManager {
       isBackground?: boolean;
       /** Called on tool start/end with activity info (for streaming progress to UI). */
       onToolActivity?: (activity: ToolActivity) => void;
+      /** Called on streaming text deltas from the assistant response. */
+      onTextDelta?: (delta: string, fullText: string) => void;
       /** Called when the agent session is created (for accessing session stats). */
       onSessionCreated?: (session: AgentSession) => void;
     },
@@ -73,6 +75,7 @@ export class AgentManager {
         if (activity.type === "end") record.toolUses++;
         options.onToolActivity?.(activity);
       },
+      onTextDelta: options.onTextDelta,
       onSessionCreated: (session) => {
         record.session = session;
         options.onSessionCreated?.(session);
@@ -128,6 +131,8 @@ export class AgentManager {
       systemPromptAppend?: string;
       /** Called on tool start/end with activity info (for streaming progress to UI). */
       onToolActivity?: (activity: ToolActivity) => void;
+      /** Called on streaming text deltas from the assistant response. */
+      onTextDelta?: (delta: string, fullText: string) => void;
       /** Called when the agent session is created (for accessing session stats). */
       onSessionCreated?: (session: AgentSession) => void;
     },

@@ -1,10 +1,10 @@
 /**
- * pi-claude-subagents — A pi extension providing Claude Code-style autonomous sub-agents.
+ * pi-agents — A pi extension providing Claude Code-style autonomous sub-agents.
  *
  * Tools:
- *   spawn_agent       — LLM-callable: spawn a sub-agent
- *   get_agent_result  — LLM-callable: check background agent status/result
- *   steer_agent       — LLM-callable: send a steering message to a running agent
+ *   Agent             — LLM-callable: spawn a sub-agent
+ *   get_subagent_result  — LLM-callable: check background agent status/result
+ *   steer_subagent       — LLM-callable: send a steering message to a running agent
  *
  * Commands:
  *   /agent <type> <prompt>  — User-invocable agent spawning
@@ -16,95 +16,27 @@ import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { AgentManager } from "./agent-manager.js";
 import { steerAgent, getAgentConversation } from "./agent-runner.js";
-import { DISPLAY_NAMES, SUBAGENT_TYPES, type SubagentType, type ThinkingLevel, type CustomAgentConfig } from "./types.js";
+import { SUBAGENT_TYPES, type SubagentType, type ThinkingLevel, type CustomAgentConfig } from "./types.js";
 import { getConfig, getAvailableTypes, getCustomAgentNames, getCustomAgentConfig, isValidType, registerCustomAgents } from "./agent-types.js";
 import { loadCustomAgents } from "./custom-agents.js";
-
-// ---- Types for custom rendering ----
-
-/** Braille spinner frames for animated running indicator. */
-const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-
-/** Metadata attached to spawn_agent tool results for custom rendering. */
-interface AgentDetails {
-  displayName: string;
-  description: string;
-  subagentType: string;
-  toolUses: number;
-  tokens: string;
-  durationMs: number;
-  status: "running" | "completed" | "steered" | "aborted" | "stopped" | "error" | "background";
-  /** Human-readable description of what the agent is currently doing. */
-  activity?: string;
-  /** Current spinner frame index (for animated running indicator). */
-  spinnerFrame?: number;
-  agentId?: string;
-  error?: string;
-}
-
-/** Format a token count as "33.8k tokens" or "1.2M tokens". */
-function formatTokens(count: number): string {
-  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M tokens`;
-  if (count >= 1_000) return `${(count / 1_000).toFixed(1)}k tokens`;
-  return `${count} tokens`;
-}
-
-/** TOOL_DISPLAY_NAMES for activity descriptions. */
-const TOOL_DISPLAY: Record<string, string> = {
-  read: "reading",
-  bash: "running command",
-  edit: "editing",
-  write: "writing",
-  grep: "searching",
-  find: "finding files",
-  ls: "listing",
-};
-
-/** Build a human-readable activity string from currently-running tools. */
-function describeActivity(activeTools: Map<string, string>): string {
-  if (activeTools.size === 0) return "";
-
-  // Group by action type
-  const groups = new Map<string, number>();
-  for (const toolName of activeTools.values()) {
-    const action = TOOL_DISPLAY[toolName] ?? toolName;
-    groups.set(action, (groups.get(action) ?? 0) + 1);
-  }
-
-  const parts: string[] = [];
-  for (const [action, count] of groups) {
-    if (count > 1) {
-      parts.push(`${action} ${count} ${action === "searching" ? "patterns" : "files"}`);
-    } else {
-      parts.push(action);
-    }
-  }
-  return parts.join(", ") + "…";
-}
+import {
+  AgentWidget,
+  SPINNER,
+  formatTokens,
+  formatMs,
+  formatDuration,
+  getDisplayName,
+  describeActivity,
+  type AgentDetails,
+  type AgentActivity,
+  type UICtx,
+} from "./ui/agent-widget.js";
 
 // ---- Shared helpers ----
 
 /** Tool execute return value for a text response. */
 function textResult(msg: string, details?: AgentDetails) {
   return { content: [{ type: "text" as const, text: msg }], details: details as any };
-}
-
-/** Get display name for any agent type (built-in or custom). */
-function getDisplayName(type: SubagentType): string {
-  if (type in DISPLAY_NAMES) return DISPLAY_NAMES[type as keyof typeof DISPLAY_NAMES];
-  const custom = getCustomAgentConfig(type);
-  return custom?.name ?? type;
-}
-
-/** Format milliseconds as human-readable duration. */
-function formatMs(ms: number): string {
-  return `${(ms / 1000).toFixed(1)}s`;
-}
-
-/** Format duration from an AgentRecord. */
-function formatDuration(startedAt: number, completedAt?: number): string {
-  if (completedAt) return formatMs(completedAt - startedAt);
-  return `${formatMs(Date.now() - startedAt)} (running)`;
 }
 
 /** Resolve system prompt overrides from a custom agent config. */
@@ -186,22 +118,8 @@ export default function (pi: ExtensionAPI) {
   const allTypes = getAvailableTypes();
   const customNames = getCustomAgentNames();
 
-  // Status bar: show count of running background agents
-  let statusCtx: { setStatus(key: string, text: string | undefined): void } | undefined;
-  pi.on("tool_execution_start", async (_event, ctx) => {
-    statusCtx = ctx.ui;
-  });
-
-  function updateAgentStatus() {
-    const running = manager.listAgents().filter(a => a.status === "running");
-    if (!statusCtx) return;
-    if (running.length === 0) {
-      statusCtx.setStatus("subagents", undefined);
-    } else {
-      const descriptions = running.map(a => a.description).join(", ");
-      statusCtx.setStatus("subagents", `${running.length} agent(s) running: ${descriptions}`);
-    }
-  }
+  // ---- Agent activity tracking + widget ----
+  const agentActivity = new Map<string, AgentActivity>();
 
   // Background completion: push notification into conversation
   const manager = new AgentManager((record) => {
@@ -218,27 +136,31 @@ export default function (pi: ExtensionAPI) {
             ? "Stopped"
             : "Done";
 
-    pi.sendMessage(
-      {
-        customType: "agent-notification",
-        content: [
-          {
-            type: "text",
-            text:
-              `Background agent completed: ${displayName} (${record.description})\n` +
-              `Agent ID: ${record.id} | Status: ${status} | Tool uses: ${record.toolUses} | Duration: ${duration}\n\n` +
-              (record.result
-                ? record.result.length > 500
-                  ? record.result.slice(0, 500) + "\n...(truncated, use get_agent_result for full output)"
-                  : record.result
-                : "No output."),
-          },
-        ],
-        display: true,
-      },
-      { triggerTurn: false },
+    const resultPreview = record.result
+      ? record.result.length > 500
+        ? record.result.slice(0, 500) + "\n...(truncated, use get_subagent_result for full output)"
+        : record.result
+      : "No output.";
+
+    agentActivity.delete(record.id);
+
+    // Poke the main agent so it processes the result (queues as follow-up if busy)
+    pi.sendUserMessage(
+      `Background agent completed: ${displayName} (${record.description})\n` +
+      `Agent ID: ${record.id} | Status: ${status} | Tool uses: ${record.toolUses} | Duration: ${duration}\n\n` +
+      resultPreview,
+      { deliverAs: "followUp" },
     );
-    updateAgentStatus();
+    widget.update();
+  });
+
+  // Live widget: show running agents above editor
+  const widget = new AgentWidget(manager, agentActivity);
+
+  // Grab UI context from first tool execution + clear lingering widget on new turn
+  pi.on("tool_execution_start", async (_event, ctx) => {
+    widget.setUICtx(ctx.ui as UICtx);
+    widget.clearLingering();
   });
 
   // Build type descriptions for the tool description
@@ -261,53 +183,55 @@ export default function (pi: ExtensionAPI) {
     ...(customDescs.length > 0 ? ["", "Custom types:", ...customDescs] : []),
   ].join("\n");
 
-  // ---- spawn_agent tool ----
+  // ---- Agent tool ----
 
   pi.registerTool<any, AgentDetails>({
-    name: "spawn_agent",
+    name: "Agent",
     label: "Agent",
     description: `Launch a new agent to handle complex, multi-step tasks autonomously.
+
+The Agent tool launches specialized agents that autonomously handle complex tasks. Each agent type has specific capabilities and tools available to it.
 
 Available agent types:
 ${typeListText}
 
 Guidelines:
-- Launch multiple agents concurrently for independent tasks (make multiple spawn_agent calls in one response).
+- For parallel work, use run_in_background: true on each agent. Foreground calls run sequentially — only one executes at a time.
 - Use Explore for codebase searches and code understanding.
 - Use Plan for architecture and implementation planning.
 - Use general-purpose for complex tasks that need file editing.
-- Provide clear, detailed prompts with all necessary context — agents start fresh with no parent context by default.
-- Set inherit_context to true if the agent needs to understand the conversation so far.
+- Provide clear, detailed prompts so the agent can work autonomously.
 - Agent results are returned as text — summarize them for the user.
-- Use run_in_background for work you don't need immediately. You will be notified when it completes. Use get_agent_result to retrieve full results.
+- Use run_in_background for work you don't need immediately. You will be notified when it completes.
 - Use resume with an agent ID to continue a previous agent's work.
-- Use steer_agent to send mid-run messages to a running background agent.
-- Use model to specify a different model (as "provider/modelId").
-- Use thinking to control extended thinking level.`,
+- Use steer_subagent to send mid-run messages to a running background agent.
+- Use model to specify a different model (as "provider/modelId", or fuzzy e.g. "haiku", "sonnet").
+- Use thinking to control extended thinking level.
+- Use inherit_context if the agent needs the parent conversation history.`,
     parameters: Type.Object({
       prompt: Type.String({
-        description: "The task for the agent to perform. Be clear and detailed — agents have no parent context unless inherit_context is set.",
+        description: "The task for the agent to perform.",
       }),
       description: Type.String({
-        description: "A short 3-5 word summary of the task (shown in UI).",
+        description: "A short (3-5 word) description of the task (shown in UI).",
       }),
       subagent_type: Type.String({
-        description: `Agent type. Built-in: ${SUBAGENT_TYPES.join(", ")}. ${customNames.length > 0 ? `Custom: ${customNames.join(", ")}.` : "No custom agents defined."}`,
+        description: `The type of specialized agent to use. Built-in: ${SUBAGENT_TYPES.join(", ")}. ${customNames.length > 0 ? `Custom: ${customNames.join(", ")}.` : "No custom agents defined."}`,
       }),
       model: Type.Optional(
         Type.String({
           description:
-            'Model as "provider/modelId" (e.g. "anthropic/claude-sonnet-4-5-20250514"). If omitted, Explore defaults to haiku; others inherit from parent.',
+            'Optional model to use. Accepts "provider/modelId" or fuzzy name (e.g. "haiku", "sonnet"). If omitted, Explore defaults to haiku; others inherit from parent.',
         }),
       ),
       thinking: Type.Optional(
         Type.String({
-          description: "Thinking level (e.g. off, minimal, low, medium, high, xhigh). Overrides agent default.",
+          description: "Thinking level: off, minimal, low, medium, high, xhigh. Overrides agent default.",
         }),
       ),
       max_turns: Type.Optional(
         Type.Number({
-          description: "Maximum number of agentic turns (API round-trips) before stopping.",
+          description: "Maximum number of agentic turns before stopping.",
           minimum: 1,
         }),
       ),
@@ -318,7 +242,7 @@ Guidelines:
       ),
       resume: Type.Optional(
         Type.String({
-          description: "Agent ID to resume. Continues from previous context — the new prompt is sent to the existing session.",
+          description: "Optional agent ID to resume from. Continues from previous context.",
         }),
       ),
       isolated: Type.Optional(
@@ -328,7 +252,7 @@ Guidelines:
       ),
       inherit_context: Type.Optional(
         Type.Boolean({
-          description: "If true, the agent receives the parent conversation history as context (like a fork). Default: false (fresh context).",
+          description: "If true, fork parent conversation into the agent. Default: false (fresh context).",
         }),
       ),
     }),
@@ -336,10 +260,9 @@ Guidelines:
     // ---- Custom rendering: Claude Code style ----
 
     renderCall(args, theme) {
-      const displayName = getDisplayName(args.subagent_type);
-      const spinner = theme.fg("accent", SPINNER[0]);
-      const text = spinner + " " + theme.fg("toolTitle", theme.bold(displayName)) + "  " + theme.fg("muted", args.description);
-      return new Text(text, 0, 0);
+      const displayName = args.subagent_type ? getDisplayName(args.subagent_type) : "Agent";
+      const desc = args.description ?? "";
+      return new Text("▸ " + theme.fg("toolTitle", theme.bold(displayName)) + (desc ? "  " + theme.fg("muted", desc) : ""), 0, 0);
     },
 
     renderResult(result, { expanded, isPartial }, theme) {
@@ -349,28 +272,28 @@ Guidelines:
         return new Text(text, 0, 0);
       }
 
+      // Helper: build "haiku · thinking: high · 3 tool uses · 33.8k tokens" stats string
+      const stats = (d: AgentDetails) => {
+        const parts: string[] = [];
+        if (d.modelName) parts.push(d.modelName);
+        if (d.tags) parts.push(...d.tags);
+        if (d.toolUses > 0) parts.push(`${d.toolUses} tool use${d.toolUses === 1 ? "" : "s"}`);
+        if (d.tokens) parts.push(d.tokens);
+        return parts.map(p => theme.fg("dim", p)).join(" " + theme.fg("dim", "·") + " ");
+      };
+
       // ---- While running (streaming) ----
       if (isPartial || details.status === "running") {
         const frame = SPINNER[details.spinnerFrame ?? 0];
-        let line = theme.fg("accent", frame) + " " + theme.fg("toolTitle", details.description);
-        if (details.toolUses > 0) {
-          line += " " + theme.fg("dim", "·") + " " + theme.fg("dim", `${details.toolUses} tool use${details.toolUses === 1 ? "" : "s"}`);
-        }
-        if (details.tokens) {
-          line += " " + theme.fg("dim", "·") + " " + theme.fg("dim", details.tokens);
-        }
-        if (details.activity) {
-          line += "\n" + theme.fg("dim", `   ⎿  ${details.activity}`);
-        }
+        const s = stats(details);
+        let line = theme.fg("accent", frame) + (s ? " " + s : "");
+        line += "\n" + theme.fg("dim", `  ⎿  ${details.activity ?? "thinking…"}`);
         return new Text(line, 0, 0);
       }
 
       // ---- Background agent launched ----
       if (details.status === "background") {
-        const frame = SPINNER[details.spinnerFrame ?? 0];
-        let line = theme.fg("accent", frame) + " " + theme.fg("toolTitle", details.description);
-        line += "\n" + theme.fg("dim", `   ⎿  Running in background (ID: ${details.agentId})`);
-        return new Text(line, 0, 0);
+        return new Text(theme.fg("dim", `  ⎿  Running in background (ID: ${details.agentId})`), 0, 0);
       }
 
       // ---- Completed / Steered ----
@@ -378,11 +301,8 @@ Guidelines:
         const duration = formatMs(details.durationMs);
         const isSteered = details.status === "steered";
         const icon = isSteered ? theme.fg("warning", "✓") : theme.fg("success", "✓");
-        let line = icon + " " + theme.fg("toolTitle", details.description);
-        line += " " + theme.fg("dim", "·") + " " + theme.fg("dim", `${details.toolUses} tool use${details.toolUses === 1 ? "" : "s"}`);
-        if (details.tokens) {
-          line += " " + theme.fg("dim", "·") + " " + theme.fg("dim", details.tokens);
-        }
+        const s = stats(details);
+        let line = icon + (s ? " " + s : "");
         line += " " + theme.fg("dim", "·") + " " + theme.fg("dim", duration);
 
         if (expanded) {
@@ -390,41 +310,35 @@ Guidelines:
           if (resultText) {
             const lines = resultText.split("\n").slice(0, 50);
             for (const l of lines) {
-              line += "\n" + theme.fg("dim", `   ${l}`);
+              line += "\n" + theme.fg("dim", `  ${l}`);
             }
             if (resultText.split("\n").length > 50) {
-              line += "\n" + theme.fg("muted", "   ... (use get_agent_result with verbose for full output)");
+              line += "\n" + theme.fg("muted", "  ... (use get_subagent_result with verbose for full output)");
             }
           }
         } else {
           const doneText = isSteered ? "Wrapped up (turn limit)" : "Done";
-          line += "\n" + theme.fg("dim", `   ⎿  ${doneText}`);
+          line += "\n" + theme.fg("dim", `  ⎿  ${doneText}`);
         }
         return new Text(line, 0, 0);
       }
 
       // ---- Stopped (user-initiated abort) ----
       if (details.status === "stopped") {
-        let line = theme.fg("dim", "■") + " " + theme.fg("toolTitle", details.description);
-        line += " " + theme.fg("dim", "·") + " " + theme.fg("dim", `${details.toolUses} tool use${details.toolUses === 1 ? "" : "s"}`);
-        if (details.tokens) {
-          line += " " + theme.fg("dim", "·") + " " + theme.fg("dim", details.tokens);
-        }
-        line += "\n" + theme.fg("dim", "   ⎿  Stopped");
+        const s = stats(details);
+        let line = theme.fg("dim", "■") + (s ? " " + s : "");
+        line += "\n" + theme.fg("dim", "  ⎿  Stopped");
         return new Text(line, 0, 0);
       }
 
       // ---- Error / Aborted (hard max_turns) ----
-      let line = theme.fg("error", "✗") + " " + theme.fg("toolTitle", details.description);
-      line += " " + theme.fg("dim", "·") + " " + theme.fg("dim", `${details.toolUses} tool use${details.toolUses === 1 ? "" : "s"}`);
-      if (details.tokens) {
-        line += " " + theme.fg("dim", "·") + " " + theme.fg("dim", details.tokens);
-      }
+      const s = stats(details);
+      let line = theme.fg("error", "✗") + (s ? " " + s : "");
 
       if (details.status === "error") {
-        line += "\n" + theme.fg("error", `   ⎿  Error: ${details.error ?? "unknown"}`);
+        line += "\n" + theme.fg("error", `  ⎿  Error: ${details.error ?? "unknown"}`);
       } else {
-        line += "\n" + theme.fg("warning", "   ⎿  Aborted (max turns exceeded)");
+        line += "\n" + theme.fg("warning", "  ⎿  Aborted (max turns exceeded)");
       }
 
       return new Text(line, 0, 0);
@@ -433,6 +347,9 @@ Guidelines:
     // ---- Execute ----
 
     execute: async (_toolCallId, params, signal, onUpdate, ctx) => {
+      // Ensure we have UI context for widget rendering
+      widget.setUICtx(ctx.ui as UICtx);
+
       const subagentType = params.subagent_type as SubagentType;
 
       // Validate subagent type
@@ -465,6 +382,24 @@ Guidelines:
 
       const { systemPromptOverride, systemPromptAppend } = resolveCustomPrompt(customConfig);
 
+      // Build display tags for non-default config
+      const parentModelId = ctx.model?.id;
+      const effectiveModelId = model?.id;
+      const agentModelName = effectiveModelId && effectiveModelId !== parentModelId
+        ? (model?.name ?? effectiveModelId).replace(/^Claude\s+/i, "").toLowerCase()
+        : undefined;
+      const agentTags: string[] = [];
+      if (thinking) agentTags.push(`thinking: ${thinking}`);
+      if (isolated) agentTags.push("isolated");
+      // Shared base fields for all AgentDetails in this call
+      const detailBase = {
+        displayName,
+        description: params.description,
+        subagentType,
+        modelName: agentModelName,
+        tags: agentTags.length > 0 ? agentTags : undefined,
+      };
+
       // Resume existing agent
       if (params.resume) {
         const existing = manager.getRecord(params.resume);
@@ -485,21 +420,15 @@ Guidelines:
         }
         return textResult(
           record.result ?? record.error ?? "No output.",
-          {
-            displayName,
-            description: params.description,
-            subagentType,
-            toolUses: record.toolUses,
-            tokens: resumeTokens,
-            durationMs,
-            status: record.status,
-            agentId: record.id,
-          },
+          { ...detailBase, toolUses: record.toolUses, tokens: resumeTokens, durationMs, status: record.status, agentId: record.id },
         );
       }
 
       // Background execution
       if (runInBackground) {
+        // Set up activity tracking for the widget
+        const bgState = { activeTools: new Map<string, string>(), toolUses: 0, tokens: "", responseText: "", session: undefined as any };
+
         const id = manager.spawn(pi, ctx, subagentType, params.prompt, {
           description: params.description,
           model,
@@ -510,26 +439,35 @@ Guidelines:
           systemPromptOverride,
           systemPromptAppend,
           isBackground: true,
+          onToolActivity: (activity) => {
+            if (activity.type === "start") {
+              bgState.activeTools.set(activity.toolName + "_" + Date.now(), activity.toolName);
+            } else {
+              for (const [key, name] of bgState.activeTools) {
+                if (name === activity.toolName) { bgState.activeTools.delete(key); break; }
+              }
+              bgState.toolUses++;
+            }
+            if (bgState.session) {
+              try { bgState.tokens = formatTokens(bgState.session.getSessionStats().tokens.total); } catch { /* */ }
+            }
+          },
+          onTextDelta: (_delta, fullText) => { bgState.responseText = fullText; },
+          onSessionCreated: (session) => { bgState.session = session; },
         });
-        updateAgentStatus();
+
+        agentActivity.set(id, bgState);
+        widget.ensureTimer();
+        widget.update();
         return textResult(
           `Agent started in background.\n` +
           `Agent ID: ${id}\n` +
           `Type: ${displayName}\n` +
           `Description: ${params.description}\n\n` +
           `You will be notified when this agent completes.\n` +
-          `Use get_agent_result to retrieve full results, or steer_agent to send it messages.\n` +
+          `Use get_subagent_result to retrieve full results, or steer_subagent to send it messages.\n` +
           `Do not duplicate this agent's work.`,
-          {
-            displayName,
-            description: params.description,
-            subagentType,
-            toolUses: 0,
-            tokens: "",
-            durationMs: 0,
-            status: "background",
-            agentId: id,
-          },
+          { ...detailBase, toolUses: 0, tokens: "", durationMs: 0, status: "background" as const, agentId: id },
         );
       }
 
@@ -541,16 +479,19 @@ Guidelines:
       const startedAt = Date.now();
       const activeTools = new Map<string, string>(); // key → toolName
 
+      // Register in shared activity map so the widget can show this agent
+      let fgResponseText = "";
+      const fgState = { activeTools, toolUses: 0, tokens: "", responseText: "", session: undefined as any };
+      let fgId: string | undefined;
+
       const streamUpdate = () => {
         const details: AgentDetails = {
-          displayName,
-          description: params.description,
-          subagentType,
+          ...detailBase,
           toolUses,
           tokens: tokenText,
           durationMs: Date.now() - startedAt,
           status: "running",
-          activity: describeActivity(activeTools),
+          activity: describeActivity(activeTools, fgResponseText),
           spinnerFrame: spinnerFrame % SPINNER.length,
         };
         onUpdate?.({
@@ -578,6 +519,16 @@ Guidelines:
         systemPromptAppend,
         onSessionCreated: (session) => {
           agentSession = session;
+          fgState.session = session;
+          // Find our agent ID from the manager and register in widget
+          for (const a of manager.listAgents()) {
+            if (a.session === session) {
+              fgId = a.id;
+              agentActivity.set(a.id, fgState);
+              widget.ensureTimer();
+              break;
+            }
+          }
         },
         onToolActivity: (activity) => {
           if (activity.type === "start") {
@@ -591,19 +542,29 @@ Guidelines:
               }
             }
             toolUses++;
+            fgState.toolUses = toolUses;
           }
           // Update token count from session (stored on record by onSessionCreated)
           if (agentSession) {
             try {
               const stats = agentSession.getSessionStats();
               tokenText = formatTokens(stats.tokens.total);
+              fgState.tokens = tokenText;
             } catch { /* session may not be ready */ }
           }
+          streamUpdate();
+        },
+        onTextDelta: (_delta, fullText) => {
+          fgResponseText = fullText;
+          fgState.responseText = fullText;
           streamUpdate();
         },
       });
 
       clearInterval(spinnerInterval);
+
+      // Clean up foreground agent from widget
+      if (fgId) agentActivity.delete(fgId);
 
       // Get final token count
       if (agentSession) {
@@ -615,16 +576,7 @@ Guidelines:
       if (record.status === "error") {
         return textResult(
           `Agent failed: ${record.error}`,
-          {
-            displayName,
-            description: params.description,
-            subagentType,
-            toolUses: record.toolUses,
-            tokens: tokenText,
-            durationMs: (record.completedAt ?? Date.now()) - record.startedAt,
-            status: "error",
-            error: record.error,
-          },
+          { ...detailBase, toolUses: record.toolUses, tokens: tokenText, durationMs: (record.completedAt ?? Date.now()) - record.startedAt, status: "error" as const, error: record.error },
         );
       }
 
@@ -640,27 +592,18 @@ Guidelines:
       return textResult(
         `Agent completed in ${formatMs(durationMs)} (${record.toolUses} tool uses)${statusNote}.\n\n` +
         (record.result ?? "No output."),
-        {
-          displayName,
-          description: params.description,
-          subagentType,
-          toolUses: record.toolUses,
-          tokens: tokenText,
-          durationMs,
-          status: record.status,
-          agentId: record.id,
-        },
+        { ...detailBase, toolUses: record.toolUses, tokens: tokenText, durationMs, status: record.status, agentId: record.id },
       );
     },
   });
 
-  // ---- get_agent_result tool ----
+  // ---- get_subagent_result tool ----
 
   pi.registerTool({
-    name: "get_agent_result",
+    name: "get_subagent_result",
     label: "Get Agent Result",
     description:
-      "Check status and retrieve results from a background agent. Use the agent ID returned by spawn_agent with run_in_background.",
+      "Check status and retrieve results from a background agent. Use the agent ID returned by Agent with run_in_background.",
     parameters: Type.Object({
       agent_id: Type.String({
         description: "The agent ID to check.",
@@ -715,10 +658,10 @@ Guidelines:
     },
   });
 
-  // ---- steer_agent tool ----
+  // ---- steer_subagent tool ----
 
   pi.registerTool({
-    name: "steer_agent",
+    name: "steer_subagent",
     label: "Steer Agent",
     description:
       "Send a steering message to a running agent. The message will interrupt the agent after its current tool execution " +
