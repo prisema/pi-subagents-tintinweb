@@ -143,6 +143,7 @@ export default function (pi: ExtensionAPI) {
       : "No output.";
 
     agentActivity.delete(record.id);
+    widget.markFinished(record.id);
 
     // Poke the main agent so it processes the result (queues as follow-up if busy)
     pi.sendUserMessage(
@@ -160,7 +161,7 @@ export default function (pi: ExtensionAPI) {
   // Grab UI context from first tool execution + clear lingering widget on new turn
   pi.on("tool_execution_start", async (_event, ctx) => {
     widget.setUICtx(ctx.ui as UICtx);
-    widget.clearLingering();
+    widget.onTurnStart();
   });
 
   // Build type descriptions for the tool description
@@ -459,12 +460,15 @@ Guidelines:
         agentActivity.set(id, bgState);
         widget.ensureTimer();
         widget.update();
+        const record = manager.getRecord(id);
+        const isQueued = record?.status === "queued";
         return textResult(
-          `Agent started in background.\n` +
+          `Agent ${isQueued ? "queued" : "started"} in background.\n` +
           `Agent ID: ${id}\n` +
           `Type: ${displayName}\n` +
-          `Description: ${params.description}\n\n` +
-          `You will be notified when this agent completes.\n` +
+          `Description: ${params.description}\n` +
+          (isQueued ? `Position: queued (max ${manager.getMaxConcurrent()} concurrent)\n` : "") +
+          `\nYou will be notified when this agent completes.\n` +
           `Use get_subagent_result to retrieve full results, or steer_subagent to send it messages.\n` +
           `Do not duplicate this agent's work.`,
           { ...detailBase, toolUses: 0, tokens: "", durationMs: 0, status: "background" as const, agentId: id },
@@ -564,7 +568,10 @@ Guidelines:
       clearInterval(spinnerInterval);
 
       // Clean up foreground agent from widget
-      if (fgId) agentActivity.delete(fgId);
+      if (fgId) {
+        agentActivity.delete(fgId);
+        widget.markFinished(fgId);
+      }
 
       // Get final token count
       if (agentSession) {

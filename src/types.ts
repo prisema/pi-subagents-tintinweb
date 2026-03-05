@@ -66,7 +66,7 @@ export interface AgentRecord {
   id: string;
   type: SubagentType;
   description: string;
-  status: "running" | "completed" | "steered" | "aborted" | "stopped" | "error";
+  status: "queued" | "running" | "completed" | "steered" | "aborted" | "stopped" | "error";
   result?: string;
   error?: string;
   toolUses: number;

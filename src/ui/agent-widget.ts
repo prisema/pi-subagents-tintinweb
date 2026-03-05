@@ -59,7 +59,7 @@ export interface AgentDetails {
   toolUses: number;
   tokens: string;
   durationMs: number;
-  status: "running" | "completed" | "steered" | "aborted" | "stopped" | "error" | "background";
+  status: "queued" | "running" | "completed" | "steered" | "aborted" | "stopped" | "error" | "background";
   /** Human-readable description of what the agent is currently doing. */
   activity?: string;
   /** Current spinner frame index (for animated running indicator). */
@@ -140,7 +140,10 @@ export class AgentWidget {
   private uiCtx: UICtx | undefined;
   private widgetFrame = 0;
   private widgetInterval: ReturnType<typeof setInterval> | undefined;
-  private widgetLingering = false;
+  /** Tracks how many turns each finished agent has survived. Key: agent ID, Value: turns since finished. */
+  private finishedTurnAge = new Map<string, number>();
+  /** How many extra turns errors/aborted agents linger (completed agents clear after 1 turn). */
+  private static readonly ERROR_LINGER_TURNS = 2;
 
   constructor(
     private manager: AgentManager,
@@ -152,16 +155,17 @@ export class AgentWidget {
     this.uiCtx = ctx;
   }
 
-  /** Clear lingering widget — call when a new turn starts. */
-  clearLingering() {
-    if (this.widgetLingering && this.uiCtx) {
-      this.widgetLingering = false;
-      this.uiCtx.setWidget("agents", undefined);
-      if (this.widgetInterval) {
-        clearInterval(this.widgetInterval);
-        this.widgetInterval = undefined;
-      }
+  /**
+   * Called on each new turn (tool_execution_start).
+   * Ages finished agents and clears those that have lingered long enough.
+   */
+  onTurnStart() {
+    // Age all finished agents
+    for (const [id, age] of this.finishedTurnAge) {
+      this.finishedTurnAge.set(id, age + 1);
     }
+    // Trigger a widget refresh (will filter out expired agents)
+    this.update();
   }
 
   /** Ensure the widget update timer is running. */
@@ -171,70 +175,116 @@ export class AgentWidget {
     }
   }
 
+  /** Check if a finished agent should still be shown in the widget. */
+  private shouldShowFinished(agentId: string, status: string): boolean {
+    const age = this.finishedTurnAge.get(agentId) ?? 0;
+    const isError = status === "error" || status === "aborted" || status === "steered" || status === "stopped";
+    const maxAge = isError ? AgentWidget.ERROR_LINGER_TURNS : 1;
+    return age < maxAge;
+  }
+
+  /** Record an agent as finished (call when agent completes). */
+  markFinished(agentId: string) {
+    if (!this.finishedTurnAge.has(agentId)) {
+      this.finishedTurnAge.set(agentId, 0);
+    }
+  }
+
+  /** Render a finished agent line. */
+  private renderFinishedLine(a: { type: SubagentType; status: string; description: string; toolUses: number; startedAt: number; completedAt?: number; error?: string }, theme: Theme): string {
+    const name = getDisplayName(a.type);
+    const duration = formatMs((a.completedAt ?? Date.now()) - a.startedAt);
+
+    let icon: string;
+    let statusText: string;
+    if (a.status === "completed") {
+      icon = theme.fg("success", "✓");
+      statusText = "";
+    } else if (a.status === "steered") {
+      icon = theme.fg("warning", "✓");
+      statusText = theme.fg("warning", " (turn limit)");
+    } else if (a.status === "stopped") {
+      icon = theme.fg("dim", "■");
+      statusText = theme.fg("dim", " stopped");
+    } else if (a.status === "error") {
+      icon = theme.fg("error", "✗");
+      const errMsg = a.error ? `: ${a.error.slice(0, 60)}` : "";
+      statusText = theme.fg("error", ` error${errMsg}`);
+    } else {
+      // aborted
+      icon = theme.fg("error", "✗");
+      statusText = theme.fg("warning", " aborted");
+    }
+
+    const parts: string[] = [];
+    if (a.toolUses > 0) parts.push(`${a.toolUses} tool use${a.toolUses === 1 ? "" : "s"}`);
+    parts.push(duration);
+
+    return `${icon} ${theme.fg("dim", name)}  ${theme.fg("dim", a.description)} ${theme.fg("dim", "·")} ${theme.fg("dim", parts.join(" · "))}${statusText}`;
+  }
+
   /** Force an immediate widget update. */
   update() {
     if (!this.uiCtx) return;
     const allAgents = this.manager.listAgents();
     const running = allAgents.filter(a => a.status === "running");
+    const queued = allAgents.filter(a => a.status === "queued");
+    const finished = allAgents.filter(a =>
+      a.status !== "running" && a.status !== "queued" && a.completedAt
+      && this.shouldShowFinished(a.id, a.status),
+    );
 
-    if (running.length === 0) {
-      // Linger: show completed agents until next turn starts
-      if (!this.widgetLingering) {
-        this.widgetLingering = true;
-      }
+    const hasActive = running.length > 0 || queued.length > 0;
+    const hasFinished = finished.length > 0;
 
-      // Show recently completed agents while lingering
-      const recent = allAgents.filter(a => a.status !== "running" && a.completedAt);
-      if (recent.length === 0) {
-        this.uiCtx.setWidget("agents", undefined);
-        this.uiCtx.setStatus("subagents", undefined);
-        if (this.widgetInterval) { clearInterval(this.widgetInterval); this.widgetInterval = undefined; }
-        this.widgetLingering = false;
-        return;
-      }
-
+    // Nothing to show — clear widget
+    if (!hasActive && !hasFinished) {
+      this.uiCtx.setWidget("agents", undefined);
       this.uiCtx.setStatus("subagents", undefined);
-      this.uiCtx.setWidget("agents", (_tui, theme) => {
-        const lines: string[] = [theme.fg("dim", "○") + " " + theme.fg("dim", "Agents")];
-        for (let i = 0; i < recent.length; i++) {
-          const a = recent[i];
-          const connector = i === recent.length - 1 ? "└─" : "├─";
-          const name = getDisplayName(a.type);
-          const duration = formatMs((a.completedAt ?? Date.now()) - a.startedAt);
-          const icon = a.status === "completed" ? theme.fg("success", "✓")
-            : a.status === "steered" ? theme.fg("warning", "✓")
-            : a.status === "stopped" ? theme.fg("dim", "■")
-            : theme.fg("error", "✗");
-          const parts: string[] = [];
-          if (a.toolUses > 0) parts.push(`${a.toolUses} tool use${a.toolUses === 1 ? "" : "s"}`);
-          parts.push(duration);
-          lines.push(theme.fg("dim", connector) + ` ${icon} ${theme.bold(name)}  ${theme.fg("muted", a.description)} ${theme.fg("dim", "·")} ${theme.fg("dim", parts.join(" · "))}`);
-        }
-        return { render: () => lines, invalidate: () => {} };
-      }, { placement: "aboveEditor" });
+      if (this.widgetInterval) { clearInterval(this.widgetInterval); this.widgetInterval = undefined; }
+      // Clean up stale entries
+      for (const [id] of this.finishedTurnAge) {
+        if (!allAgents.some(a => a.id === id)) this.finishedTurnAge.delete(id);
+      }
       return;
     }
 
-    // Agents are running — not lingering
-    this.widgetLingering = false;
+    // Status bar
+    if (hasActive) {
+      const statusParts: string[] = [];
+      if (running.length > 0) statusParts.push(`${running.length} running`);
+      if (queued.length > 0) statusParts.push(`${queued.length} queued`);
+      const total = running.length + queued.length;
+      this.uiCtx.setStatus("subagents", `${statusParts.join(", ")} agent${total === 1 ? "" : "s"}`);
+    } else {
+      this.uiCtx.setStatus("subagents", undefined);
+    }
 
-    // Status bar: short summary
-    this.uiCtx.setStatus("subagents", `${running.length} agent${running.length === 1 ? "" : "s"} running`);
-
-    // Widget: detailed per-agent lines
     this.widgetFrame++;
     const frame = SPINNER[this.widgetFrame % SPINNER.length];
 
     this.uiCtx.setWidget("agents", (_tui, theme) => {
-      const lines: string[] = [theme.fg("accent", "●") + " " + theme.fg("accent", "Agents")];
+      const headingColor = hasActive ? "accent" : "dim";
+      const headingIcon = hasActive ? "●" : "○";
+      const lines: string[] = [theme.fg(headingColor, headingIcon) + " " + theme.fg(headingColor, "Agents")];
 
+      // --- Finished agents (shown first, dimmed) ---
+      for (let i = 0; i < finished.length; i++) {
+        const a = finished[i];
+        const isLast = !hasActive && i === finished.length - 1;
+        const connector = isLast ? "└─" : "├─";
+        lines.push(theme.fg("dim", connector) + " " + this.renderFinishedLine(a, theme));
+      }
+
+      // --- Running agents ---
+      const isLastSection = queued.length === 0;
       for (let i = 0; i < running.length; i++) {
         const a = running[i];
-        const connector = i === running.length - 1 ? "└─" : "├─";
+        const isLast = isLastSection && i === running.length - 1;
+        const connector = isLast ? "└─" : "├─";
         const name = getDisplayName(a.type);
         const elapsed = formatMs(Date.now() - a.startedAt);
 
-        // Get live activity data
         const bg = this.agentActivity.get(a.id);
         const toolUses = bg?.toolUses ?? a.toolUses;
         let tokenText = "";
@@ -251,8 +301,13 @@ export class AgentWidget {
         const activity = bg ? describeActivity(bg.activeTools, bg.responseText) : "thinking…";
 
         lines.push(theme.fg("dim", connector) + ` ${theme.fg("accent", frame)} ${theme.bold(name)}  ${theme.fg("muted", a.description)} ${theme.fg("dim", "·")} ${theme.fg("dim", statsText)}`);
-        const indent = i === running.length - 1 ? "   " : "│  ";
+        const indent = isLast ? "   " : "│  ";
         lines.push(theme.fg("dim", indent) + theme.fg("dim", `  ⎿  ${activity}`));
+      }
+
+      // --- Queued agents (collapsed) ---
+      if (queued.length > 0) {
+        lines.push(theme.fg("dim", "└─") + ` ${theme.fg("muted", "◦")} ${theme.fg("dim", `${queued.length} queued`)}`);
       }
 
       return { render: () => lines, invalidate: () => {} };
