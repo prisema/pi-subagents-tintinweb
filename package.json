@@ -1,16 +1,16 @@
 {
   "name": "@tintinweb/pi-subagents",
-  "version": "0.5.3-prisema.0",
+  "version": "0.5.3-prisema.1",
   "description": "A pi extension extension that brings smart Claude Code-style autonomous sub-agents to pi.",
-  "author": "tintinweb",
+  "author": "Prisema",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/tintinweb/pi-subagents.git"
+    "url": "https://github.com/prisema/pi-subagents-tintinweb.git"
   },
-  "homepage": "https://github.com/tintinweb/pi-subagents#readme",
+  "homepage": "https://github.com/prisema/pi-subagents-tintinweb#readme",
   "bugs": {
-    "url": "https://github.com/tintinweb/pi-subagents/issues"
+    "url": "https://github.com/prisema/pi-subagents-tintinweb/issues"
   },
   "keywords": [
     "pi-package",
