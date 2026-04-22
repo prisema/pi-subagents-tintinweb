@@ -430,7 +430,7 @@ export default function (pi: ExtensionAPI) {
     manager.clearCompleted();           // preserve existing behavior
   });
 
-  pi.on("session_switch", () => { manager.clearCompleted(); });
+  pi.on("session_before_switch", () => { manager.clearCompleted(); return {}; });
 
   const { unsubPing: unsubPingRpc, unsubSpawn: unsubSpawnRpc, unsubStop: unsubStopRpc } = registerRpcHandlers({
     events: pi.events,
@@ -834,8 +834,15 @@ Guidelines:
         if (record && joinMode) {
           record.joinMode = joinMode;
           record.toolCallId = toolCallId;
-          record.outputFile = createOutputFilePath(ctx.cwd, id, ctx.sessionManager.getSessionId());
-          writeInitialEntry(record.outputFile, id, params.prompt, ctx.cwd);
+
+          try {
+            const safeCwd = ctx.cwd || process.cwd();
+            const sessionId = ctx.sessionManager.getSessionId?.() || `${Date.now()}-${id}`;
+            record.outputFile = createOutputFilePath(safeCwd, id, sessionId);
+            writeInitialEntry(record.outputFile, id, params.prompt, safeCwd);
+          } catch {
+            record.outputFile = undefined;
+          }
         }
 
         if (joinMode == null || joinMode === 'async') {

@@ -2,6 +2,8 @@
  * agent-runner.ts — Core execution engine: creates sessions, runs agents, collects results.
  */
 
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { Model } from "@mariozechner/pi-ai";
 import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
 import {
@@ -232,9 +234,14 @@ export async function runAgent(
   // Still pass noSkills: true since we don't need the skill loader to load them again.
   const noSkills = skills === false || Array.isArray(skills);
 
+  const agentDir = join(homedir(), ".pi", "agent");
+  const settingsManager = SettingsManager.create(effectiveCwd, agentDir);
+
   // Load extensions/skills: true or string[] → load; false → don't
   const loader = new DefaultResourceLoader({
     cwd: effectiveCwd,
+    agentDir,
+    settingsManager,
     noExtensions: extensions === false,
     noSkills,
     noPromptTemplates: true,
@@ -254,7 +261,7 @@ export async function runAgent(
   const sessionOpts: Record<string, unknown> = {
     cwd: effectiveCwd,
     sessionManager: SessionManager.inMemory(effectiveCwd),
-    settingsManager: SettingsManager.create(),
+    settingsManager,
     modelRegistry: ctx.modelRegistry,
     model,
     tools,
