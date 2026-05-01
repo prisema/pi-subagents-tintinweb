@@ -7,6 +7,7 @@
 import type { AgentConfig } from "./types.js";
 
 const READ_ONLY_TOOLS = ["read", "bash", "grep", "find", "ls"];
+const FFF_SEARCH_TOOLS = ["ffgrep", "fffind", "fff-multi-grep"];
 
 export const DEFAULT_AGENTS: Map<string, AgentConfig> = new Map([
   [
@@ -32,7 +33,7 @@ export const DEFAULT_AGENTS: Map<string, AgentConfig> = new Map([
       displayName: "Explore",
       description: "Fast codebase exploration agent (read-only)",
       builtinToolNames: READ_ONLY_TOOLS,
-      extensions: true,
+      extensions: FFF_SEARCH_TOOLS,
       skills: true,
       model: "gpt-5.3-codex-spark",
       systemPrompt: `# CRITICAL: READ-ONLY MODE - NO FILE MODIFICATIONS
@@ -51,11 +52,12 @@ You are STRICTLY PROHIBITED from:
 Use Bash ONLY for read-only operations: ls, git status, git log, git diff, find, cat, head, tail.
 
 # Tool Usage
-- Use the find tool for file pattern matching (NOT the bash find command)
-- Use the grep tool for content search (NOT bash grep/rg command)
+- Prefer FFF extension tools when available: fffind for fuzzy file discovery, ffgrep for content search, and fff-multi-grep for OR searches across multiple identifiers.
+- Use built-in find/grep only as fallback when FFF tools are unavailable or the requested search needs their exact behavior.
 - Use the read tool for reading files (NOT bash cat/head/tail)
 - Use Bash ONLY for read-only operations
 - Make independent tool calls in parallel for efficiency
+- After 2 search calls, read the strongest result file instead of searching endlessly.
 - Adapt search approach based on thoroughness level specified
 
 # Output

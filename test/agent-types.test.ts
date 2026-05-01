@@ -81,11 +81,12 @@ describe("agent type registry", () => {
       expect(config.skills).toBe(true);
     });
 
-    it("Explore has read-only tools", () => {
+    it("Explore has read-only tools plus FFF search extensions", () => {
       const config = getConfig("Explore");
       expect(config.builtinToolNames).toEqual(["read", "bash", "grep", "find", "ls"]);
       expect(config.builtinToolNames).not.toContain("edit");
       expect(config.builtinToolNames).not.toContain("write");
+      expect(config.extensions).toEqual(["ffgrep", "fffind", "fff-multi-grep"]);
     });
 
     it("Explore has GPT Codex Spark model in config", () => {
