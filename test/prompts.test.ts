@@ -40,14 +40,15 @@ describe("buildAgentPrompt", () => {
     expect(prompt).not.toContain("Branch:");
   });
 
-  it("Explore prompt is read-only and prefers FFF search", () => {
+  it("Explore prompt is a read-only context builder that prefers FFF search", () => {
     const config = getDefaultConfig("Explore");
     const prompt = buildAgentPrompt(config, "/workspace", env);
-    expect(prompt).toContain("READ-ONLY");
-    expect(prompt).toContain("file search specialist");
+    expect(prompt).toContain("READ-ONLY CONTEXT BUILDER");
+    expect(prompt).toContain("Context Pack");
     expect(prompt).toContain("fffind");
     expect(prompt).toContain("ffgrep");
     expect(prompt).toContain("fff-multi-grep");
+    expect(prompt).toContain("Do not depend on codedb or qmd");
   });
 
   it("Plan prompt is read-only", () => {
