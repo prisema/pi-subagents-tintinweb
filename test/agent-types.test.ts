@@ -5,9 +5,9 @@ import {
   getAvailableTypes,
   getConfig,
   getDefaultAgentNames,
-  getMemoryTools,
-  getReadOnlyMemoryTools,
-  getToolsForType,
+  getMemoryToolNames,
+  getReadOnlyMemoryToolNames,
+  getToolNamesForType,
   getUserAgentNames,
   isValidType,
   registerAgents,
@@ -98,6 +98,18 @@ describe("agent type registry", () => {
       expect(cfg?.isDefault).toBe(true);
     });
 
+    // Regression guard for #37 — default agents must not bake in callsite-strategy fields.
+    // An explicit `false` here would silently win over the caller's `true` via `??` in
+    // resolveAgentInvocationConfig, breaking documented Agent tool params.
+    it("default agents do not lock strategy fields (run_in_background / inherit_context / isolated)", () => {
+      for (const name of ["general-purpose", "Explore", "Plan"]) {
+        const cfg = getAgentConfig(name);
+        expect(cfg?.runInBackground, `${name}.runInBackground`).toBeUndefined();
+        expect(cfg?.inheritContext, `${name}.inheritContext`).toBeUndefined();
+        expect(cfg?.isolated, `${name}.isolated`).toBeUndefined();
+      }
+    });
+
     it("getDefaultAgentNames returns default agent names", () => {
       const names = getDefaultAgentNames();
       expect(names).toContain("general-purpose");
@@ -105,7 +117,7 @@ describe("agent type registry", () => {
       expect(names).toContain("Plan");
     });
 
-    it("BUILTIN_TOOL_NAMES is derived from factory keys", () => {
+    it("BUILTIN_TOOL_NAMES includes all built-in tools", () => {
       expect(BUILTIN_TOOL_NAMES).toContain("read");
       expect(BUILTIN_TOOL_NAMES).toContain("bash");
       expect(BUILTIN_TOOL_NAMES).toContain("edit");
@@ -179,15 +191,15 @@ describe("agent type registry", () => {
       expect(config.skills).toEqual(["planning"]);
     });
 
-    it("getToolsForType works for user agents", () => {
+    it("getToolNamesForType works for user agents", () => {
       const agents = new Map([["auditor", makeAgentConfig({
         name: "auditor",
         builtinToolNames: ["read", "grep", "find"],
       })]]);
       registerAgents(agents);
 
-      const tools = getToolsForType("auditor", "/tmp");
-      expect(tools).toHaveLength(3);
+      const names = getToolNamesForType("auditor");
+      expect(names).toEqual(["read", "grep", "find"]);
     });
 
     it("getConfig falls back to general-purpose for unknown types", () => {
@@ -244,10 +256,9 @@ describe("agent type registry", () => {
     });
   });
 
-  describe("getMemoryTools", () => {
+  describe("getMemoryToolNames", () => {
     it("returns read, write, edit when none exist", () => {
-      const tools = getMemoryTools("/tmp", new Set());
-      const names = tools.map(t => t.name);
+      const names = getMemoryToolNames(new Set());
       expect(names).toContain("read");
       expect(names).toContain("write");
       expect(names).toContain("edit");
@@ -255,27 +266,25 @@ describe("agent type registry", () => {
     });
 
     it("skips tools that already exist", () => {
-      const tools = getMemoryTools("/tmp", new Set(["read", "edit"]));
-      const names = tools.map(t => t.name);
+      const names = getMemoryToolNames(new Set(["read", "edit"]));
       expect(names).toEqual(["write"]);
     });
 
     it("returns empty when all memory tools already exist", () => {
-      const tools = getMemoryTools("/tmp", new Set(["read", "write", "edit"]));
-      expect(tools).toHaveLength(0);
+      const names = getMemoryToolNames(new Set(["read", "write", "edit"]));
+      expect(names).toHaveLength(0);
     });
   });
 
-  describe("getReadOnlyMemoryTools", () => {
+  describe("getReadOnlyMemoryToolNames", () => {
     it("returns only read when missing", () => {
-      const tools = getReadOnlyMemoryTools("/tmp", new Set());
-      const names = tools.map(t => t.name);
+      const names = getReadOnlyMemoryToolNames(new Set());
       expect(names).toEqual(["read"]);
     });
 
     it("returns empty when read already exists", () => {
-      const tools = getReadOnlyMemoryTools("/tmp", new Set(["read"]));
-      expect(tools).toHaveLength(0);
+      const names = getReadOnlyMemoryToolNames(new Set(["read"]));
+      expect(names).toHaveLength(0);
     });
   });
 });

@@ -11,9 +11,8 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
-import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import { defineTool, type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext, getAgentDir } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { AgentManager } from "./agent-manager.js";
@@ -25,6 +24,7 @@ import { GroupJoinManager } from "./group-join.js";
 import { resolveAgentInvocationConfig, resolveJoinMode } from "./invocation-config.js";
 import { type ModelRegistry, resolveModel } from "./model-resolver.js";
 import { createOutputFilePath, streamToOutputFile, writeInitialEntry } from "./output-file.js";
+import { applyAndEmitLoaded, type SubagentsSettings, saveAndEmitChanged } from "./settings.js";
 import { type AgentConfig, type AgentRecord, type JoinMode, type NotificationDetails, type SubagentType } from "./types.js";
 import {
   type AgentActivity,
@@ -430,7 +430,7 @@ export default function (pi: ExtensionAPI) {
     manager.clearCompleted();           // preserve existing behavior
   });
 
-  pi.on("session_before_switch", () => { manager.clearCompleted(); return {}; });
+  pi.on("session_before_switch", () => { manager.clearCompleted(); });
 
   const { unsubPing: unsubPingRpc, unsubSpawn: unsubSpawnRpc, unsubStop: unsubStopRpc } = registerRpcHandlers({
     events: pi.events,
@@ -534,7 +534,7 @@ export default function (pi: ExtensionAPI) {
       ...defaultDescs,
       ...(customDescs.length > 0 ? ["", "Custom agents:", ...customDescs] : []),
       "",
-      "Custom agents can be defined in .pi/agents/<name>.md (project) or ~/.pi/agent/agents/<name>.md (global) — they are picked up automatically. Project-level agents override global ones. Creating a .md file with the same name as a default agent overrides it.",
+      `Custom agents can be defined in .pi/agents/<name>.md (project) or ${getAgentDir()}/agents/<name>.md (global) — they are picked up automatically. Project-level agents override global ones. Creating a .md file with the same name as a default agent overrides it.`,
     ].join("\n");
   };
 
@@ -548,9 +548,22 @@ export default function (pi: ExtensionAPI) {
 
   const typeListText = buildTypeListText();
 
+  // Apply persisted settings on startup and emit `subagents:settings_loaded`.
+  // Global + project merged; missing → defaults; corrupt file emits a warning
+  // to stderr and falls back to defaults.
+  applyAndEmitLoaded(
+    {
+      setMaxConcurrent: (n) => manager.setMaxConcurrent(n),
+      setDefaultMaxTurns,
+      setGraceTurns,
+      setDefaultJoinMode,
+    },
+    (event, payload) => pi.events.emit(event, payload),
+  );
+
   // ---- Agent tool ----
 
-  pi.registerTool<any, AgentDetails>({
+  pi.registerTool(defineTool({
     name: "Agent",
     label: "Agent",
     description: `Launch a new agent to handle complex, multi-step tasks autonomously.
@@ -582,7 +595,7 @@ Guidelines:
         description: "A short (3-5 word) description of the task (shown in UI).",
       }),
       subagent_type: Type.String({
-        description: `The type of specialized agent to use. Available types: ${getAvailableTypes().join(", ")}. Custom agents from .pi/agents/*.md (project) or ~/.pi/agent/agents/*.md (global) are also available.`,
+        description: `The type of specialized agent to use. Available types: ${getAvailableTypes().join(", ")}. Custom agents from .pi/agents/*.md (project) or ${getAgentDir()}/agents/*.md (global) are also available.`,
       }),
       model: Type.Optional(
         Type.String({
@@ -938,6 +951,7 @@ Guidelines:
         inheritContext,
         thinkingLevel: thinking,
         isolation,
+        signal,
         ...fgCallbacks,
       });
 
@@ -971,11 +985,11 @@ Guidelines:
         details,
       );
     },
-  });
+  }));
 
   // ---- get_subagent_result tool ----
 
-  pi.registerTool({
+  pi.registerTool(defineTool({
     name: "get_subagent_result",
     label: "Get Agent Result",
     description:
@@ -1045,11 +1059,11 @@ Guidelines:
 
       return textResult(output);
     },
-  });
+  }));
 
   // ---- steer_subagent tool ----
 
-  pi.registerTool({
+  pi.registerTool(defineTool({
     name: "steer_subagent",
     label: "Steer Agent",
     description:
@@ -1087,12 +1101,12 @@ Guidelines:
         return textResult(`Failed to steer agent: ${err instanceof Error ? err.message : String(err)}`);
       }
     },
-  });
+  }));
 
   // ---- /agents interactive menu ----
 
   const projectAgentsDir = () => join(process.cwd(), ".pi", "agents");
-  const personalAgentsDir = () => join(homedir(), ".pi", "agent", "agents");
+  const personalAgentsDir = () => join(getAgentDir(), "agents");
 
   /** Find the file path of a custom agent by name (project first, then global). */
   function findAgentFile(name: string): { path: string; location: "project" | "personal" } | undefined {
@@ -1331,7 +1345,7 @@ Guidelines:
   async function ejectAgent(ctx: ExtensionCommandContext, name: string, cfg: AgentConfig) {
     const location = await ctx.ui.select("Choose location", [
       "Project (.pi/agents/)",
-      "Personal (~/.pi/agent/agents/)",
+      `Personal (${personalAgentsDir()})`,
     ]);
     if (!location) return;
 
@@ -1393,7 +1407,7 @@ Guidelines:
     // No file (built-in default) — create a stub
     const location = await ctx.ui.select("Choose location", [
       "Project (.pi/agents/)",
-      "Personal (~/.pi/agent/agents/)",
+      `Personal (${personalAgentsDir()})`,
     ]);
     if (!location) return;
 
@@ -1431,7 +1445,7 @@ Guidelines:
   async function showCreateWizard(ctx: ExtensionCommandContext) {
     const location = await ctx.ui.select("Choose location", [
       "Project (.pi/agents/)",
-      "Personal (~/.pi/agent/agents/)",
+      `Personal (${personalAgentsDir()})`,
     ]);
     if (!location) return;
 
@@ -1612,6 +1626,17 @@ ${systemPrompt}
     ctx.ui.notify(`Created ${targetPath}`, "info");
   }
 
+  function snapshotSettings(): SubagentsSettings {
+    return {
+      maxConcurrent: manager.getMaxConcurrent(),
+      // 0 = unlimited — per SubagentsSettings.defaultMaxTurns docstring and
+      // normalizeMaxTurns() in agent-runner.ts (which maps 0 → undefined).
+      defaultMaxTurns: getDefaultMaxTurns() ?? 0,
+      graceTurns: getGraceTurns(),
+      defaultJoinMode: getDefaultJoinMode(),
+    };
+  }
+
   async function showSettings(ctx: ExtensionCommandContext) {
     const choice = await ctx.ui.select("Settings", [
       `Max concurrency (current: ${manager.getMaxConcurrent()})`,
@@ -1627,7 +1652,7 @@ ${systemPrompt}
         const n = parseInt(val, 10);
         if (n >= 1) {
           manager.setMaxConcurrent(n);
-          ctx.ui.notify(`Max concurrency set to ${n}`, "info");
+          notifyApplied(ctx, `Max concurrency set to ${n}`);
         } else {
           ctx.ui.notify("Must be a positive integer.", "warning");
         }
@@ -1638,10 +1663,10 @@ ${systemPrompt}
         const n = parseInt(val, 10);
         if (n === 0) {
           setDefaultMaxTurns(undefined);
-          ctx.ui.notify("Default max turns set to unlimited", "info");
+          notifyApplied(ctx, "Default max turns set to unlimited");
         } else if (n >= 1) {
           setDefaultMaxTurns(n);
-          ctx.ui.notify(`Default max turns set to ${n}`, "info");
+          notifyApplied(ctx, `Default max turns set to ${n}`);
         } else {
           ctx.ui.notify("Must be 0 (unlimited) or a positive integer.", "warning");
         }
@@ -1652,7 +1677,7 @@ ${systemPrompt}
         const n = parseInt(val, 10);
         if (n >= 1) {
           setGraceTurns(n);
-          ctx.ui.notify(`Grace turns set to ${n}`, "info");
+          notifyApplied(ctx, `Grace turns set to ${n}`);
         } else {
           ctx.ui.notify("Must be a positive integer.", "warning");
         }
@@ -1666,9 +1691,22 @@ ${systemPrompt}
       if (val) {
         const mode = val.split(" ")[0] as JoinMode;
         setDefaultJoinMode(mode);
-        ctx.ui.notify(`Default join mode set to ${mode}`, "info");
+        notifyApplied(ctx, `Default join mode set to ${mode}`);
       }
     }
+  }
+
+  // Persist the current snapshot, emit `subagents:settings_changed`, and surface
+  // the right toast. Successful saves show info; persistence failures downgrade
+  // to warning so users aren't silently reverted on restart. Event fires regardless
+  // of outcome so listeners see the in-memory change.
+  function notifyApplied(ctx: ExtensionCommandContext, successMsg: string) {
+    const { message, level } = saveAndEmitChanged(
+      snapshotSettings(),
+      successMsg,
+      (event, payload) => pi.events.emit(event, payload),
+    );
+    ctx.ui.notify(message, level);
   }
 
   pi.registerCommand("agents", {

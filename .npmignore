@@ -3,6 +3,9 @@ tsconfig.json
 .vscode/
 .git/
 .gitignore
+codedb.snapshot*
+codedb.snapshot.github/
+docs/agent/
 
 # Documentation
 PLAN.md
@@ -20,6 +23,8 @@ test/
 tests/
 *.test.ts
 *.spec.ts
+*.test.js
+*.test.d.ts
 
 .pi
 .claude
