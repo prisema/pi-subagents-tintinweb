@@ -95,6 +95,15 @@ describe("agent type registry", () => {
       expect(cfg?.model).toBe("gpt-5.3-codex-spark");
     });
 
+    it("Plan is a read-only Taskdone planning architect", () => {
+      const config = getConfig("Plan");
+      expect(config.description).toContain("Taskdone-ready");
+      expect(config.builtinToolNames).toEqual(["read", "bash", "grep", "find", "ls"]);
+      expect(config.builtinToolNames).not.toContain("edit");
+      expect(config.builtinToolNames).not.toContain("write");
+      expect(config.extensions).toEqual(["ffgrep", "fffind", "fff-multi-grep"]);
+    });
+
     it("default agents are marked isDefault", () => {
       const cfg = getAgentConfig("general-purpose");
       expect(cfg?.isDefault).toBe(true);

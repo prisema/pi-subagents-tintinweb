@@ -51,11 +51,14 @@ describe("buildAgentPrompt", () => {
     expect(prompt).toContain("Do not depend on codedb or qmd");
   });
 
-  it("Plan prompt is read-only", () => {
+  it("Plan prompt is read-only and drafts Taskdone manifests", () => {
     const config = getDefaultConfig("Plan");
     const prompt = buildAgentPrompt(config, "/workspace", env);
-    expect(prompt).toContain("READ-ONLY");
-    expect(prompt).toContain("software architect");
+    expect(prompt).toContain("READ-ONLY TASKDONE PLANNING ARCHITECT");
+    expect(prompt).toContain("Taskdone JSON draft");
+    expect(prompt).toContain("pending_user_approval");
+    expect(prompt).toContain("Aprova este plano e o Taskdone JSON");
+    expect(prompt).toContain("Do not depend on codedb or qmd");
   });
 
   it("general-purpose uses append mode (parent twin)", () => {
