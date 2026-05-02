@@ -58,8 +58,29 @@ describe("buildAgentPrompt", () => {
     expect(prompt).toContain(".pi/taskdone/plans/<plan-id>/plan.md");
     expect(prompt).toContain(".pi/taskdone/plans/<plan-id>/taskdone.json");
     expect(prompt).toContain("pending_user_approval");
+    expect(prompt).toContain("detailed task catalog");
+    expect(prompt).toContain("validationCommands");
+    expect(prompt).toContain("risksRollback");
+    expect(prompt).toContain("Task catalog preview");
+    expect(prompt).toContain("Do not reply only with");
     expect(prompt).toContain("Aprova este plano e o Taskdone JSON");
     expect(prompt).toContain("Do not depend on codedb or qmd");
+  });
+
+  it("Implement prompt requires scoped TDD work", () => {
+    const config = getDefaultConfig("Implement");
+    const prompt = buildAgentPrompt(config, "/workspace", env);
+    expect(prompt).toContain("SCOPED TDD IMPLEMENTATION AGENT");
+    expect(prompt).toContain("RED: add or identify a focused failing test");
+    expect(prompt).toContain("completion marker");
+  });
+
+  it("Review prompt is read-only and evidence-driven", () => {
+    const config = getDefaultConfig("Review");
+    const prompt = buildAgentPrompt(config, "/workspace", env);
+    expect(prompt).toContain("EVIDENCE-DRIVEN REVIEW AGENT");
+    expect(prompt).toContain("Acceptance criteria are the checklist");
+    expect(prompt).toContain("Never use edit/write");
   });
 
   it("general-purpose uses append mode (parent twin)", () => {

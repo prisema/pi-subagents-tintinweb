@@ -102,8 +102,10 @@ Group completions render each agent as a separate block. The LLM receives struct
 | `general-purpose` | all 7 | inherit | `append` (parent twin) | Inherits the parent's full system prompt — same rules, CLAUDE.md, project conventions |
 | `Explore` | read, bash, grep, find, ls + FFF search tools | gpt-5.3-codex-spark (falls back to inherit) | `replace` (standalone) | Fast context-building for codebase discovery (read-only) |
 | `Plan` | read, bash, grep, find, ls, write, edit + FFF search tools | inherit | `replace` (standalone) | Taskdone-ready planning artifact author |
+| `Implement` | read, bash, edit, write, grep, find, ls + FFF search tools | inherit | `replace` (standalone) | Superpowers-style TDD implementation agent |
+| `Review` | read, bash, grep, find, ls + FFF search tools | inherit | `replace` (standalone) | Evidence-driven reviewer/validator (read-only) |
 
-The `general-purpose` agent is a **parent twin** — it receives the parent's entire system prompt plus a sub-agent context bridge, so it follows the same rules the parent does. Explore uses a standalone read-only prompt for concise Context Packs before implementation; Plan uses a controlled-write standalone prompt that may write only planning artifacts under `.pi/taskdone/plans/<plan-id>/` while producing an approval-gated Taskdone Planning Package with `plan.md` and `taskdone.json`. Both allowlist FFF search extension tools (`fffind`, `ffgrep`, `fff-multi-grep`) when `@ff-labs/pi-fff` is installed.
+The `general-purpose` agent is a **parent twin** — it receives the parent's entire system prompt plus a sub-agent context bridge, so it follows the same rules the parent does. Explore uses a standalone read-only prompt for concise Context Packs before implementation. Plan uses a controlled-write standalone prompt that may write only planning artifacts under `.pi/taskdone/plans/<plan-id>/` while producing an approval-gated Taskdone Planning Package with `plan.md`, `taskdone.json`, a detailed task catalog in both artifacts, and a visible task preview in its final response. Implement is the scoped TDD code-writing role. Review is the read-only evidence gate for acceptance criteria and fix requests. All specialized default agents allowlist FFF search extension tools (`fffind`, `ffgrep`, `fff-multi-grep`) when `@ff-labs/pi-fff` is installed.
 
 Default agents can be **ejected** (`/agents` → select agent → Eject) to export them as `.md` files for customization, **overridden** by creating a `.md` file with the same name (e.g. `.pi/agents/general-purpose.md`), or **disabled** per-project with `enabled: false` frontmatter.
 
@@ -442,7 +444,7 @@ This is useful for creating agents that inherit extension tools but should not h
 src/
   index.ts            # Extension entry: tool/command registration, rendering
   types.ts            # Type definitions (AgentConfig, AgentRecord, etc.)
-  default-agents.ts   # Embedded default agent configs (general-purpose, Explore, Plan)
+  default-agents.ts   # Embedded default agent configs (general-purpose, Explore, Plan, Implement, Review)
   agent-types.ts      # Unified agent registry (defaults + user), tool name resolution
   agent-runner.ts     # Session creation, execution, graceful max_turns, steer/resume
   agent-manager.ts    # Agent lifecycle, concurrency queue, completion notifications

@@ -576,8 +576,10 @@ ${typeListText}
 Guidelines:
 - For parallel work, use run_in_background: true on each agent. Foreground calls run sequentially — only one executes at a time.
 - Use Explore for codebase searches and code understanding.
-- Use Plan for architecture and implementation planning.
-- Use general-purpose for complex tasks that need file editing.
+- Use Plan for Taskdone-ready planning artifacts and approval-gated implementation plans.
+- Use Implement for scoped TDD implementation work.
+- Use Review for evidence-driven verification and code review.
+- Use general-purpose for complex tasks that do not fit the specialized roles.
 - Provide clear, detailed prompts so the agent can work autonomously.
 - Agent results are returned as text — summarize them for the user.
 - Use run_in_background for work you don't need immediately. You will be notified when it completes.

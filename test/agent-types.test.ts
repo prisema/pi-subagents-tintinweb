@@ -41,6 +41,8 @@ describe("agent type registry", () => {
       expect(isValidType("general-purpose")).toBe(true);
       expect(isValidType("Explore")).toBe(true);
       expect(isValidType("Plan")).toBe(true);
+      expect(isValidType("Implement")).toBe(true);
+      expect(isValidType("Review")).toBe(true);
     });
 
     it("does not include removed agents", () => {
@@ -70,6 +72,8 @@ describe("agent type registry", () => {
       expect(resolveType("Explore")).toBe("Explore");
       expect(resolveType("explore")).toBe("Explore");
       expect(resolveType("GENERAL-PURPOSE")).toBe("general-purpose");
+      expect(resolveType("implement")).toBe("Implement");
+      expect(resolveType("review")).toBe("Review");
       expect(resolveType("nonexistent")).toBeUndefined();
     });
 
@@ -102,6 +106,22 @@ describe("agent type registry", () => {
       expect(config.extensions).toEqual(["ffgrep", "fffind", "fff-multi-grep"]);
     });
 
+    it("Implement is a scoped TDD writer", () => {
+      const config = getConfig("Implement");
+      expect(config.description).toContain("TDD implementation");
+      expect(config.builtinToolNames).toEqual(["read", "bash", "edit", "write", "grep", "find", "ls"]);
+      expect(config.extensions).toEqual(["ffgrep", "fffind", "fff-multi-grep"]);
+    });
+
+    it("Review is read-only and evidence-driven", () => {
+      const config = getConfig("Review");
+      expect(config.description).toContain("evidence-driven reviewer");
+      expect(config.builtinToolNames).toEqual(["read", "bash", "grep", "find", "ls"]);
+      expect(config.builtinToolNames).not.toContain("edit");
+      expect(config.builtinToolNames).not.toContain("write");
+      expect(config.extensions).toEqual(["ffgrep", "fffind", "fff-multi-grep"]);
+    });
+
     it("default agents are marked isDefault", () => {
       const cfg = getAgentConfig("general-purpose");
       expect(cfg?.isDefault).toBe(true);
@@ -111,7 +131,7 @@ describe("agent type registry", () => {
     // An explicit `false` here would silently win over the caller's `true` via `??` in
     // resolveAgentInvocationConfig, breaking documented Agent tool params.
     it("default agents do not lock strategy fields (run_in_background / inherit_context / isolated)", () => {
-      for (const name of ["general-purpose", "Explore", "Plan"]) {
+      for (const name of ["general-purpose", "Explore", "Plan", "Implement", "Review"]) {
         const cfg = getAgentConfig(name);
         expect(cfg?.runInBackground, `${name}.runInBackground`).toBeUndefined();
         expect(cfg?.inheritContext, `${name}.inheritContext`).toBeUndefined();
@@ -124,6 +144,8 @@ describe("agent type registry", () => {
       expect(names).toContain("general-purpose");
       expect(names).toContain("Explore");
       expect(names).toContain("Plan");
+      expect(names).toContain("Implement");
+      expect(names).toContain("Review");
     });
 
     it("BUILTIN_TOOL_NAMES includes all built-in tools", () => {
