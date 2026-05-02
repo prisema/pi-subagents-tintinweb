@@ -51,11 +51,12 @@ describe("buildAgentPrompt", () => {
     expect(prompt).toContain("Do not depend on codedb or qmd");
   });
 
-  it("Plan prompt is read-only and drafts Taskdone manifests", () => {
+  it("Plan prompt can write Taskdone planning artifacts only", () => {
     const config = getDefaultConfig("Plan");
     const prompt = buildAgentPrompt(config, "/workspace", env);
-    expect(prompt).toContain("READ-ONLY TASKDONE PLANNING ARCHITECT");
-    expect(prompt).toContain("Taskdone JSON draft");
+    expect(prompt).toContain("CONTROLLED-WRITE TASKDONE PLANNING ARCHITECT");
+    expect(prompt).toContain(".pi/taskdone/plans/<plan-id>/plan.md");
+    expect(prompt).toContain(".pi/taskdone/plans/<plan-id>/taskdone.json");
     expect(prompt).toContain("pending_user_approval");
     expect(prompt).toContain("Aprova este plano e o Taskdone JSON");
     expect(prompt).toContain("Do not depend on codedb or qmd");
